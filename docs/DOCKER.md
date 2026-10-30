@@ -39,14 +39,16 @@ tabs — is identical.
 
 ## What you need
 
-- A Docker host. The image is built for **x86_64**, which is what Unraid runs. (On an
-  arm64 host, change `BUILD_FROM` to `ghcr.io/home-assistant/aarch64-base:3.19`.)
+- A Docker host. The image defaults to an **x86_64** base, which is what Unraid runs. On
+  an arm64 host, add
+  `--build-arg BUILD_FROM=ghcr.io/home-assistant/aarch64-base:3.19` to the `docker build`
+  command below.
 - At least one **RTSP camera** reachable from that host.
 - Home Assistant somewhere on the same network — **optional**, and only for spoken
   `{"text": …}` announcements. Cameras stream fine with no Home Assistant at all.
 
-There is **no prebuilt image to pull**: you build it locally from this repo, which is a
-single command and takes a few minutes (mostly `apk add ffmpeg`).
+There is **no prebuilt image to pull**: you build it locally from this repo with one
+`docker build`, which takes a few minutes (mostly `apk add ffmpeg`).
 
 > **Read the [add-on documentation](../alexa_cameras/DOCS.md) too.** It is the real
 > reference for every setting, `copy` vs `transcode`, finding your camera's RTSP path, and
@@ -56,9 +58,17 @@ single command and takes a few minutes (mostly `apk add ffmpeg`).
 
 ## Install on Unraid
 
-Unraid has no native "build from source" flow in the Docker tab, so use the
-**Docker Compose Manager** plugin — it understands the `build:` directive and the stack
-then appears in Unraid's normal Docker UI.
+There is no prebuilt image to pull, so this is two steps: **build the image from a
+terminal**, then run it with the **Docker Compose Manager** plugin so the container shows
+up in Unraid's normal Docker UI.
+
+Building by hand rather than letting Compose do it is deliberate. Recent Buildx enforces
+filesystem *entitlements* on the bake backend that Compose uses internally, granting read
+access only to the build context — and `docker compose build` has no `--allow` flag to
+widen it. Since Compose Manager keeps its stack files on the USB flash
+(`/boot/config/plugins/compose.manager/projects/<stack>/`) while your clone lives on the
+array, a relative build context resolves to the wrong place and the build dies with
+`additional privileges requested`. A plain `docker build` has no such restriction.
 
 1. **Install the plugin.** *Apps* → search **Docker Compose Manager** → *Install*.
    (If you don't have Community Applications yet, install that first.)
@@ -71,15 +81,22 @@ then appears in Unraid's normal Docker UI.
    git clone https://github.com/Hu1kSmash/ha-alexa-cameras.git alexa-cameras
    ```
 
-   The build context is `./alexa_cameras` **relative to the repo root**, so keep the whole
-   repo — don't copy out just the compose file.
+3. **Build the image.** Still in the terminal, from the repo root:
 
-3. **Create the stack.** *Docker* tab → *Compose* → **Add New Stack** → name it
-   `alexa-cameras`. Click its gear → **Edit Stack** → **Compose File**, and either paste
-   the contents of [`docker-compose.yml`](../docker-compose.yml) or point the stack at the
-   cloned directory (the plugin's *Select Directory* option) so `git pull` keeps it current.
+   ```sh
+   docker build -t alexa-cameras:local ./alexa_cameras
+   ```
 
-4. **Set your values.** Gear → **Edit Stack** → **Edit .env**:
+   A few minutes the first time (mostly `apk add ffmpeg`). The trailing
+   `./alexa_cameras` is the build context — run this from the repo root so it resolves.
+
+4. **Create the stack.** *Docker* tab → *Compose* → **Add New Stack** → name it
+   `alexa-cameras`. Click its gear → **Edit Stack** → **Compose File** and paste the
+   contents of [`docker-compose.yml`](../docker-compose.yml). It references
+   `alexa-cameras:local` — the image you just built — and has no `build:` section, so
+   Compose Manager only ever runs the container.
+
+5. **Set your values.** Gear → **Edit Stack** → **Edit .env**:
 
    ```ini
    TZ=America/New_York
@@ -91,8 +108,8 @@ then appears in Unraid's normal Docker UI.
    `HA_URL` / `HA_TOKEN` can be left blank for now — cameras work without them; only
    spoken announcements need them. See [`.env.example`](../.env.example).
 
-5. **Build and start.** Gear → **Compose Up**. The first run builds the image, so give it
-   a few minutes. Then open **`http://<unraid-ip>:8099`** and continue at
+6. **Start it.** Gear → **Compose Up**. It should come up in seconds, since the image is
+   already built. Then open **`http://<unraid-ip>:8099`** and continue at
    [First run](#first-run-configure-it).
 
 > **Don't** recreate this as a hand-made container in Unraid's *Add Container* form. The
@@ -109,10 +126,10 @@ then appears in Unraid's normal Docker UI.
 git clone https://github.com/Hu1kSmash/ha-alexa-cameras.git
 cd ha-alexa-cameras
 cp .env.example .env
-$EDITOR .env                 # TZ, DATA_DIR, and optionally HA_URL + HA_TOKEN
-docker compose build
+$EDITOR .env                          # TZ, DATA_DIR, and optionally HA_URL + HA_TOKEN
+docker build -t alexa-cameras:local ./alexa_cameras
 docker compose up -d
-docker compose logs -f       # watch the startup banner
+docker compose logs -f                # watch the startup banner
 ```
 
 A healthy start logs the banner with **`[standalone]`** next to the version, a
@@ -254,10 +271,13 @@ the address is the same either way.)
 ```sh
 cd /mnt/user/appdata/compose/alexa-cameras
 git pull
-docker compose up -d --build     # rebuild and recreate
+docker build -t alexa-cameras:local ./alexa_cameras
+docker compose up -d --force-recreate
 ```
 
-On Unraid: *git pull* from a terminal, then gear → **Compose Up** (it rebuilds).
+On Unraid you can do the first three lines in a terminal and then gear → **Compose Up**,
+which picks up the rebuilt image. `--force-recreate` is what makes Compose replace a
+running container when only the image underneath it changed.
 
 - **Logs:** `docker compose logs -f`, or the UI's **Logs** tab (same content).
 - **Backup:** just `$DATA_DIR/config.yaml`. Everything else is rebuildable.
@@ -285,6 +305,8 @@ and camera auth are all the same in both modes. These are the standalone-specifi
 | Startup says `[addon]` but you expected standalone | A `SUPERVISOR_TOKEN` is present in the environment | Set `STANDALONE=1`. |
 | `docker.img` filling up while streaming | The tmpfs on `/tmp` is missing | Use the provided `docker-compose.yml`; confirm with `docker exec alexa-cameras df -h /tmp`. |
 | Camera workers behave strangely, or host processes die | `pid: host` (or a shared PID namespace) was added | Remove it. `run.sh` restarts workers with in-container `pkill` patterns and must own its PID namespace. |
+| `additional privileges requested: pass "--allow=fs.read=/boot/config/plugins/compose.manager/projects/..."` on **Compose Up** | A `build:` section was added back to the compose file (or you ran `docker compose build`). Buildx enforces filesystem entitlements on the bake backend Compose uses, granting read access only to the build context — and Compose has **no** `--allow` flag, so the privilege the message names cannot be passed through it | Build the image separately instead: `docker build -t alexa-cameras:local ./alexa_cameras` from the repo root, and keep the compose file's `image:`-only form. As a last resort you can set `BUILDX_BAKE_ENTITLEMENTS_FS=0` in the environment to disable the check, but that removes the gating for every build on the host. |
+| `Unable to find image 'alexa-cameras:local'` / `pull access denied` | The image hasn't been built yet, or was built under a different tag | Run `docker build -t alexa-cameras:local ./alexa_cameras` from the repo root. `docker images \| grep alexa-cameras` shows what you have. |
 
 When reporting an issue, the startup **configuration summary** in the log masks passwords
 and tokens and includes the run mode, so it's safe to paste as-is. The diagnostics line on

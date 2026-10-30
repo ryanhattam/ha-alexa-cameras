@@ -1,21 +1,29 @@
 # Standalone (non-Home-Assistant-add-on) deployment — e.g. Unraid via the Docker Compose
-# Manager plugin, or any plain Docker host. Built locally from this repo; nothing is pulled
-# from a registry except the base image.
+# Manager plugin, or any plain Docker host.
 #
-#   docker compose build && docker compose up -d
+# BUILD THE IMAGE FIRST, then bring the stack up:
 #
-# Host-specific values and the Home Assistant token live in a .env file next to this one.
-# Full walkthrough: docs/DOCKER.md
+#   docker build -t alexa-cameras:local ./alexa_cameras
+#   docker compose up -d
+#
+# This file deliberately has no `build:` section, so Compose never shells out to BuildKit's
+# bake backend. Recent Buildx enforces filesystem "entitlements" for bake and grants read
+# access only to the build context — and `docker compose build` has no `--allow` flag to
+# widen that, so a context Compose can't reach fails with:
+#
+#   additional privileges requested: pass "--allow=fs.read=/path" to grant requested privileges
+#
+# On Unraid that bites because the Compose Manager plugin keeps this file on the USB flash
+# (/boot/config/plugins/compose.manager/projects/<stack>/) while the repo lives on the
+# array, so a relative context resolves to the wrong place. A plain `docker build` has no
+# such restriction, and it keeps Compose Manager doing the one thing it is good at: running
+# the container. See docs/DOCKER.md.
 services:
   alexa-cameras:
     container_name: alexa-cameras
-    build:
-      context: ./alexa_cameras
-      args:
-        # The same base image the Home Assistant builder uses, so the runtime (s6-overlay
-        # as PID 1, ffmpeg, python3) is identical in both modes. x86_64 — which is what
-        # Unraid runs; on an arm64 host build with aarch64-base instead.
-        BUILD_FROM: ghcr.io/home-assistant/amd64-base:3.19
+    # Built by the `docker build` command above. The add-on version reported in the log,
+    # the Web UI and /api/sysinfo comes from inside the image, not from this tag.
+    image: ${IMAGE:-alexa-cameras:local}
     restart: unless-stopped
     environment:
       TZ: ${TZ:-Etc/UTC}

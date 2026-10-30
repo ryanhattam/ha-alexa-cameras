@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.20.1
+
+- **Standalone: build the image with `docker build`, not through Compose.** `docker-compose.yml`
+  no longer has a `build:` section and runs a prebuilt `alexa-cameras:local` instead. Recent
+  Buildx enforces filesystem entitlements on the bake backend that Compose uses internally and
+  grants read access only to the build context, while `docker compose build` has no `--allow`
+  flag to widen it — so on Unraid, where the Docker Compose Manager plugin keeps its stack files
+  on the USB flash while the repo sits on the array, a relative build context resolved to the
+  wrong place and the build failed with `additional privileges requested: pass
+  "--allow=fs.read=..."`. A plain `docker build` has no such restriction, and this leaves Compose
+  Manager doing only what it's good at: running the container. The Unraid walkthrough,
+  the plain-`docker compose` quickstart and the update steps in
+  [docs/DOCKER.md](../docs/DOCKER.md) all gained the explicit build step, plus troubleshooting
+  rows for that error and for a missing image tag.
+
 ## 1.20.0
 
 - **Runs as a standalone Docker container, not just a Home Assistant add-on.** Add-ons need
