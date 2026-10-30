@@ -3,3 +3,6 @@
 .DS_Store
 __pycache__/
 *.pyc
+
+# Standalone deployment: holds HA_TOKEN, never commit it.
+.env

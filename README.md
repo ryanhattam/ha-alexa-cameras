@@ -203,6 +203,18 @@ it manually:
    configuring the add-on, and from there on to the end-to-end setup guide (HTTPS + the Alexa
    skill).
 
+### Not running Home Assistant Supervisor?
+
+Add-ons need the Supervisor, so the steps above don't apply if you run Home Assistant as a
+plain Docker container (Unraid, Synology, HA Container, a `docker compose` stack). The
+**same image also runs as an ordinary container** and detects which mode it's in at
+startup — same Web UI, same streams, same audio injection. Two things change: the Web UI
+is on port **8099** with no Home Assistant login in front of it, and spoken `{"text": …}`
+announcements need a long-lived access token instead of the Supervisor.
+
+→ **[Running as a standalone Docker container](docs/DOCKER.md)** (includes an Unraid
+walkthrough and [`docker-compose.yml`](docker-compose.yml)).
+
 ## Documentation
 
 Everything about running the add-on lives in the docs — this README is just the overview.
@@ -211,6 +223,10 @@ Everything about running the add-on lives in the docs — this README is just th
   and run the add-on: full settings reference, `copy` vs `transcode`, finding your camera's RTSP
   path, the Web UI tabs, audio injection (announce *through* a camera), the birdseye auto-show
   recipe, bulk-cleaning stale Alexa devices, and troubleshooting.
+- **[Running as a standalone Docker container](docs/DOCKER.md)** — for anyone without the
+  Home Assistant Supervisor: build and run it as a plain container (Unraid via Docker
+  Compose Manager, or `docker compose` anywhere), wire it to Home Assistant with a
+  long-lived token, and secure the Web UI behind a reverse proxy.
 - **[End-to-end setup guide](docs/END-TO-END-SETUP.md)** — the rest of the self-hosted path
   around the add-on: Cloudflare Tunnel + WAF, the Alexa Smart Home skill, and the AWS Lambda
   camera override. (The add-on docs link you here when you're ready.)

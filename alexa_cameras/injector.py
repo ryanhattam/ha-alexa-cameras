@@ -49,9 +49,9 @@ import struct
 import subprocess
 import threading
 import time
-import urllib.request
 
 import yaml
+import haapi
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 RATE = 48000            # Hz  — must match run.sh's ffmpeg FIFO input (-ar)
@@ -68,15 +68,13 @@ CONFIG = "/data/config.yaml"
 PORT = 8790
 MAX_CLIP_SEC = 20       # cap a single injected clip so a bad URL can't flood the queue
 
-# s6-overlay strips SUPERVISOR_TOKEN from the service env but persists it as a file.
-S6_TOKEN_FILE = "/run/s6/container_environment/SUPERVISOR_TOKEN"
-
 feeders = {}            # cam -> Feeder
 # Runtime settings from /data/config.yaml (loaded at startup):
 #   inject_token : shared secret required on /say (empty = no auth)
 #   tts_engine   : default HA TTS entity for the {"text":...} convenience mode
-#   ha_base      : base URL the add-on fetches HA audio from (internal, avoids hairpin NAT)
-SETTINGS = {"token": "", "tts_engine": "", "ha_base": "http://homeassistant:8123"}
+# (Where to reach Home Assistant itself — add-on Supervisor proxy vs. HA_URL/HA_TOKEN
+# for a standalone container — is resolved by haapi, including the `ha_base` override.)
+SETTINGS = {"token": "", "tts_engine": ""}
 CAM_TTS = {}            # cam name -> its own default TTS engine (overrides the global tts_engine)
 
 
@@ -87,7 +85,6 @@ def load_settings():
         cfg = {}
     SETTINGS["token"] = str(cfg.get("inject_token", "")).strip()
     SETTINGS["tts_engine"] = str(cfg.get("tts_engine", "")).strip()
-    SETTINGS["ha_base"] = (str(cfg.get("ha_base", "")).strip() or "http://homeassistant:8123").rstrip("/")
     CAM_TTS.clear()
     for c in (cfg.get("cameras") or []):
         nm = str(c.get("name", "")).strip()
@@ -96,30 +93,22 @@ def load_settings():
             CAM_TTS[nm] = eng
 
 
-def _supervisor_token():
-    try:
-        return open(S6_TOKEN_FILE).read().strip()
-    except Exception:
-        return os.environ.get("SUPERVISOR_TOKEN", "")
-
-
 def tts_url_for(text, engine=""):
-    """Ask HA to render `text` and return a URL the add-on can fetch. Uses the s6 token
-    to reach the core API via the Supervisor; fetches the audio from ha_base (internal
-    hostname) to dodge the hairpin-NAT flakiness of HA's external LAN URL."""
+    """Ask HA to render `text` and return a URL we can fetch. The API call goes through
+    haapi (Supervisor proxy as an add-on, HA_URL + HA_TOKEN standalone); the audio is
+    then fetched from haapi.ha_origin(), which as an add-on is HA's internal hostname
+    to dodge the hairpin-NAT flakiness of its external LAN URL.
+
+    Only the {"text":...} mode needs any of this — {"url":...} and {"test":true} make
+    no Home Assistant call, so they keep working with no token configured at all."""
     eng = (engine or SETTINGS["tts_engine"]).strip()
     if not eng:
         raise RuntimeError("no TTS engine — set 'tts_engine' in config or pass 'engine'")
-    body = json.dumps({"engine_id": eng, "message": text}).encode()
-    req = urllib.request.Request(
-        "http://supervisor/core/api/tts_get_url", data=body,
-        headers={"Authorization": "Bearer " + _supervisor_token(),
-                 "Content-Type": "application/json"})
-    r = json.load(urllib.request.urlopen(req, timeout=15))
+    r = haapi.ha_post("/api/tts_get_url", {"engine_id": eng, "message": text})
     path = r.get("path") or ""
     if not path:
         raise RuntimeError("tts_get_url returned no path")
-    return SETTINGS["ha_base"] + path
+    return haapi.ha_origin() + path
 
 
 def _frames(pcm):

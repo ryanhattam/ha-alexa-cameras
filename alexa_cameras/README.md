@@ -32,7 +32,7 @@ instead.
 
 1. Add this repo in **Settings → Add-ons → Add-on Store → ⋮ → Repositories**, install
    **Alexa Cameras (HLS)**, and **Start** it.
-2. **Open Web UI → Configuration**: set your **Home Assistant IP** (a private IPv4) and
+2. **Open Web UI → Configuration**: set your **Server IP** (a private IPv4) and
    add your cameras.
 3. Confirm each feed in the **Validate streams** tab.
 

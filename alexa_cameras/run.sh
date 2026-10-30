@@ -55,7 +55,7 @@ banner() {
   ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝
 ART
   printf '        C A M E R A S  (HLS)  —  RTSP → Amazon Echo Show\n'
-  printf '        v%s   %s %s\n' "${VERSION:-?}" "${1:-started}" "$(date '+%Y-%m-%d %H:%M:%S %Z')"
+  printf '        v%s  [%s]   %s %s\n' "${VERSION:-?}" "$MODE" "${1:-started}" "$(date '+%Y-%m-%d %H:%M:%S %Z')"
   printf '        \302\251 2026 Tom Hirt  \302\267  github.com/Hu1kSmash/ha-alexa-cameras\n'
   printf '████████████████████████████████████████████████████████████████\n\n'
 }
@@ -65,6 +65,12 @@ ART
 print_diag() {
   log "──── configuration summary (safe to share — passwords/tokens masked) ────"
   log "version=${VERSION:-?}  tz=${TZ_NAME:-UTC}  ffmpeg=$(ffmpeg -version 2>/dev/null | head -1 | awk '{print $3}')"
+  if [ "$MODE" = "addon" ]; then
+    log "mode=add-on — Home Assistant API via the Supervisor proxy; UI on :8099 behind ingress (authenticated by HA)"
+  else
+    log "mode=standalone — HA_URL='$(cenv HA_URL)'  HA_TOKEN=$([ -n "$(cenv HA_TOKEN)" ] && echo SET || echo unset)"
+    log "mode=standalone — UI on :8099 has NO authentication: keep it on the LAN, behind a reverse proxy (see docs/DOCKER.md)"
+  fi
   read -r _dp _da _ds <<< "$(disk_stat)"; [ -n "$_dp" ] && printf '[diag] disk %s: %s%% used, %s free of %s\n' "$HLS" "$_dp" "$_da" "$_ds"
   python3 - <<'PY'
 import re, yaml
@@ -98,12 +104,24 @@ print("[diag] " + "─" * 60)
 PY
 }
 
-# Use the host's local timezone for all log timestamps. The image ships tzdata, but
-# s6-overlay strips TZ from the service environment (only `docker exec` sessions get it),
-# so the main process would default to UTC. s6 does persist the env as files, so read the
-# zone from there and apply it for this process and every child (HTTP server, UI, injector,
-# date output).
-TZ_NAME="$(cat /run/s6/container_environment/TZ 2>/dev/null || true)"
+# Read a container environment variable. s6-overlay keeps the container env out of the
+# service environment (only `docker exec` sessions get it) and dumps it as one file per
+# variable instead, so the file is the primary source; printenv covers a non-s6 run
+# (`docker run --entrypoint /run.sh`). haapi.py does the same thing for the Python side.
+cenv() { cat "/run/s6/container_environment/$1" 2>/dev/null || printenv "$1" 2>/dev/null || true; }
+
+# Which way are we running? As a Home Assistant add-on the Supervisor injects
+# SUPERVISOR_TOKEN; as a standalone container (plain Docker / Unraid) it does not, and
+# Home Assistant is reached via HA_URL + HA_TOKEN instead. STANDALONE=1 forces standalone,
+# which is useful for testing. The token's value is only ever tested, never printed.
+MODE=addon
+[ -n "$(cenv SUPERVISOR_TOKEN)" ] || MODE=standalone
+case "$(cenv STANDALONE)" in 1|true|yes|on) MODE=standalone ;; esac
+
+# Use the host's local timezone for all log timestamps. The image ships tzdata, but the
+# env arrives as described above, so read the zone through cenv() and apply it for this
+# process and every child (HTTP server, UI, injector, date output).
+TZ_NAME="$(cenv TZ)"
 if [ -n "$TZ_NAME" ] && [ -e "/usr/share/zoneinfo/$TZ_NAME" ]; then
   export TZ="$TZ_NAME"
   ln -sf "/usr/share/zoneinfo/$TZ_NAME" /etc/localtime 2>/dev/null || true

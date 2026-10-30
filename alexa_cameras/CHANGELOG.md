@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.20.0
+
+- **Runs as a standalone Docker container, not just a Home Assistant add-on.** Add-ons need
+  the Supervisor, so there was no way to run this alongside Home Assistant in a plain
+  container (Unraid, Synology, HA Container, a `docker compose` stack). The same image now
+  does both and **detects which mode it's in at startup** — nothing about the add-on install
+  changes. New [`docker-compose.yml`](../docker-compose.yml) and
+  [standalone guide](../docs/DOCKER.md) with an Unraid walkthrough.
+  - **Home Assistant access.** The two optional HA calls — listing `tts.*` entities for the
+    config dropdown, and rendering `{"text": ...}` announcements — went through the
+    Supervisor's proxy with a Supervisor-injected token. They now resolve through a single
+    new `haapi.py`: the Supervisor as an add-on, or **`HA_URL` + `HA_TOKEN`** (a long-lived
+    access token) standalone, with `ha_base` / `ha_token` config keys as the file-based
+    alternative. Missing credentials degrade as before — the TTS dropdown comes up empty
+    with the reason shown, and `{"url": ...}` / `{"test": true}` injection keep working with
+    no Home Assistant at all.
+  - **`docker build` works on its own.** `BUILD_FROM` had no default, so the Dockerfile could
+    only be built by Home Assistant's builder. It now defaults to the same
+    `ghcr.io/home-assistant/amd64-base` image the add-on uses, so the runtime (s6-overlay,
+    ffmpeg, python3) is identical in both modes.
+  - **Timezone** is now read from the `TZ` environment variable when s6's env file isn't
+    there, so log timestamps are local in a plain `docker run` too.
+  - The startup banner, the configuration summary and the Overview tab all state the run
+    mode, and the summary warns that a standalone Web UI on `:8099` has **no
+    authentication** — Home Assistant's ingress was providing it. Put a reverse proxy in
+    front; because the UI was built for ingress, subpath proxying needs no changes.
+
+- **"Home Assistant IP" is now "Server IP."** The `lan_ip` setting never really meant Home
+  Assistant's address — it means *the host that publishes port 8888*, which is what your
+  Cloudflare tunnel has to target. That's the Home Assistant server for an add-on, but the
+  Docker host for a standalone container. Same key, same private-IPv4 validation, accurate
+  wording in the form, the error messages and the docs.
+
 ## 1.19.17
 
 - Camera editor: the **On-demand** checkbox no longer holds up Frigate birdseye as the example of

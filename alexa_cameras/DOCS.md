@@ -31,7 +31,8 @@ Each camera you configure is served on the add-on's port **8888** at:
 ## The add-on Web UI
 
 Everything is done from the add-on's own dashboard — click **Open Web UI**, or use the **Alexa
-Cameras** item in the Home Assistant sidebar. Its tabs:
+Cameras** item in the Home Assistant sidebar. (Running as a [standalone container](https://github.com/Hu1kSmash/ha-alexa-cameras/blob/main/docs/DOCKER.md)
+instead? It's the same dashboard, at `http://<host-ip>:8099`.) Its tabs:
 
 - **Overview** — status (version, camera count, a clickable **Served at** `http://<HA-IP>:8888` link
   to browse the raw served files, the configured **TTS engine** used for audio-injection text, and the
@@ -70,15 +71,17 @@ changes** marker appears by the **Save & apply** button (at the bottom of the fo
 with unsaved edits prompts first, so a half-finished change is never silently lost. Nothing takes
 effect until you **Save & apply**.
 
-![The Configuration tab — set the RTSP defaults and the Home Assistant IP (a private IPv4, not a hostname), then manage cameras as a read-only summary (each row shows its source / mode / audio / always-on-or-on-demand pills, with Edit and Delete buttons and + Add camera). Below sit the Audio injection panel (control-API token + default TTS engine) and Streaming (advanced) with the global transcode defaults; the Save & apply / View as YAML / Discard changes buttons and a saved/unsaved indicator are at the bottom](https://raw.githubusercontent.com/Hu1kSmash/ha-alexa-cameras/main/docs/images/configuration.png)
+![The Configuration tab — set the RTSP defaults and the Server IP (a private IPv4, not a hostname), then manage cameras as a read-only summary (each row shows its source / mode / audio / always-on-or-on-demand pills, with Edit and Delete buttons and + Add camera). Below sit the Audio injection panel (control-API token + default TTS engine) and Streaming (advanced) with the global transcode defaults; the Save & apply / View as YAML / Discard changes buttons and a saved/unsaved indicator are at the bottom](https://raw.githubusercontent.com/Hu1kSmash/ha-alexa-cameras/main/docs/images/configuration.png)
 
 ---
 
 ## Quick start
 
 1. Start the add-on, then **Open Web UI** → **Configuration**.
-2. Set the **Home Assistant IP** (required) — your HA server's private LAN IPv4 (the four
-   boxes, e.g. `192.168.1.100`). This is used for the "Served at" and "Internal" links.
+2. Set the **Server IP** (required) — the private LAN IPv4 of the host publishing port
+   8888: your Home Assistant server as an add-on, or the Docker/Unraid host when running
+   [standalone](https://github.com/Hu1kSmash/ha-alexa-cameras/blob/main/docs/DOCKER.md) (the four boxes, e.g. `192.168.1.100`). This is used for the
+   "Served at" and "Internal" links.
 3. Fill in **RTSP defaults** (username / password / port) — the login shared by your
    cameras.
 4. Add a **camera**: a `name` (lowercase, no spaces), a **host** (its IP) *or* a full
@@ -110,11 +113,11 @@ full `url` ignores these and uses whatever is in that URL.)
 | **Port** (`rtsp_port`) | No | The network port your cameras use for RTSP. This is almost always **`554`** (the industry standard), so if you've never deliberately changed it, leave it at 554. Only change it if your camera or NVR documentation lists a different RTSP port. |
 | **Default RTSP path** (`default_path`) | No | The last part of the RTSP link — everything after the camera's IP and port — that tells the camera **which** video feed to send. Most cameras offer two: a high-resolution **main** stream and a lower-resolution **sub** stream, and the exact path text differs by brand. This value is used for every camera that doesn't set its own **Path**, so if all your cameras are the same brand you set it once here. The shipped default `/cam/realmonitor?channel=1&subtype=1` is the Amcrest/Dahua **sub-stream** — low-res, which is perfect for the small Echo Show screen and usually already H.264 (so `copy` works). Don't know yours? See the **Finding your camera's RTSP path** section below — you can discover it with VLC or the camera's web page. |
 
-### Home Assistant IP
+### Server IP
 
 | Field | Required | Description |
 |---|---|---|
-| **Home Assistant IP** (`lan_ip`) | **Yes** | The local-network address of the machine running Home Assistant — the device this add-on is installed on (e.g. `192.168.1.100`). You can find it in Home Assistant under **Settings → System → Network**, or in your router's list of connected devices. Enter it as four numbers in the boxes. Must be an **IP, not a hostname**, and it's **required** for a real reason: it's the exact address your **Cloudflare tunnel must point at**. The add-on publishes port **8888 on the HA host**, so the tunnel's route (or `additional_hosts` service) has to target `http://<this-IP>:8888` (see the [setup guide](https://github.com/Hu1kSmash/ha-alexa-cameras/blob/main/docs/END-TO-END-SETUP.md)).<br><br>Entering it also gives you two ways to check your work. On the **Overview** tab, the **Served at** link shows `http://<lan_ip>:8888` — the exact URL to copy into your tunnel's config. On the **Public URL check** tab, that same internal address is compared against your external HTTPS URL, so if the internal stream works but the external one doesn't, the problem is in the tunnel/WAF, not the add-on. Point the tunnel anywhere else — the `homeassistant` hostname (HA Core on `:8123`) or Frigate's go2rtc (`:1984`) — and the camera won't serve: a black screen. **`lan_ip` and the tunnel target must be the same host.** |
+| **Server IP** (`lan_ip`) | **Yes** | The local-network address of **the host that publishes port 8888** — the machine running Home Assistant when this is an add-on, or the Docker/Unraid host when it runs as a [standalone container](https://github.com/Hu1kSmash/ha-alexa-cameras/blob/main/docs/DOCKER.md) (e.g. `192.168.1.100`). For an add-on you can find it in Home Assistant under **Settings → System → Network**; otherwise it's your Docker host's LAN address. Either way it's in your router's list of connected devices. Enter it as four numbers in the boxes. Must be an **IP, not a hostname**, and it's **required** for a real reason: it's the exact address your **Cloudflare tunnel must point at**. Port **8888 is published on that host**, so the tunnel's route (or `additional_hosts` service) has to target `http://<this-IP>:8888` (see the [setup guide](https://github.com/Hu1kSmash/ha-alexa-cameras/blob/main/docs/END-TO-END-SETUP.md)).<br><br>Entering it also gives you two ways to check your work. On the **Overview** tab, the **Served at** link shows `http://<lan_ip>:8888` — the exact URL to copy into your tunnel's config. On the **Public URL check** tab, that same internal address is compared against your external HTTPS URL, so if the internal stream works but the external one doesn't, the problem is in the tunnel/WAF, not the add-on. Point the tunnel anywhere else — the `homeassistant` hostname (HA Core on `:8123`) or Frigate's go2rtc (`:1984`) — and the camera won't serve: a black screen. **`lan_ip` and the tunnel target must be the same host.** |
 
 ### Cameras
 
@@ -159,7 +162,8 @@ Optional — for announcing *through* a camera (pair with a camera's **Audio** s
 |---|---|---|
 | **Control API token** (`inject_token`) | No (recommended) | A password **you make up** to protect the audio-announcement API (the `POST :8790/say` endpoint that plays sound through a camera). Anything on your network that can reach that endpoint could otherwise play audio through your cameras, so set a long random string here and send the **same** value on every call (HTTP header `X-Inject-Token`, JSON field `token`, or `?token=` in the URL) — a wrong or missing value gets a **403**. This is unrelated to your camera or Home Assistant passwords; you invent it. Leave it blank only for a quick local test. |
 | **Default TTS engine** (`tts_engine`) | No | Which **text-to-speech voice** Home Assistant uses when you send a `{"text": "…"}` announcement and let the add-on speak it. It's the entity ID of a TTS engine you've set up in Home Assistant under **Settings → Voice assistants** — for example `tts.google_en_com`. The Configuration form gives you a **dropdown** of the engines you already have installed, so you don't have to type or guess it. Only needed for the *text* mode of audio injection (not when you play a ready-made audio URL). Any camera can **override this voice** for its own announcements in its **Edit** dialog (blank = use this default); a `POST /say` can also override it per call with an `engine` field. |
-| `ha_base` *(advanced, YAML only)* | No | Advanced, rarely changed — there's no form field for it. The web address the add-on uses to fetch audio that Home Assistant generates for `{"text": …}` announcements. Defaults to `http://homeassistant:8123` (Home Assistant's internal hostname), which works for almost every install. Only set this if your Home Assistant isn't reachable at that address. |
+| `ha_base` *(advanced, YAML only)* | No | Advanced, rarely changed — there's no form field for it. The web address used to fetch audio that Home Assistant generates for `{"text": …}` announcements. Defaults to `http://homeassistant:8123` (Home Assistant's internal hostname), which works for almost every add-on install. Only set this if your Home Assistant isn't reachable at that address.<br><br>**Running as a [standalone container](https://github.com/Hu1kSmash/ha-alexa-cameras/blob/main/docs/DOCKER.md)?** That internal hostname doesn't resolve outside the add-on network, so this address is required — but set it with the **`HA_URL`** environment variable instead, which is what `docker-compose.yml` uses. If both are set, the environment variable wins. |
+| `ha_token` *(advanced, YAML only)* | No | Only for a [standalone container](https://github.com/Hu1kSmash/ha-alexa-cameras/blob/main/docs/DOCKER.md): a Home Assistant **long-lived access token**, used to render `{"text": …}` announcements. As an add-on this is unnecessary — the Supervisor provides credentials automatically. Normally set with the **`HA_TOKEN`** environment variable rather than here, so it doesn't sit in the config file; the environment variable wins if both are set. |
 
 ### Streaming (advanced)
 
@@ -185,7 +189,7 @@ The add-on connects **straight to each camera's RTSP** — the simplest setup: i
 to each camera with no additional configuration necessary.
 
 ```yaml
-lan_ip: 192.168.1.100                                # Home Assistant server's LAN IP (required)
+lan_ip: 192.168.1.100                                # LAN IP of the host publishing :8888 (required)
 
 # RTSP login shared by cameras that use `host`
 rtsp_user: admin
@@ -534,7 +538,7 @@ Once your camera is reachable over the internet (via the tunnel + Alexa skill �
 [setup guide](https://github.com/Hu1kSmash/ha-alexa-cameras/blob/main/docs/END-TO-END-SETUP.md)),
 this tab confirms the whole chain per camera. It compares:
 
-- **Internal** — the LAN stream on `:8888` (built from your **Home Assistant IP**), what the
+- **Internal** — the LAN stream on `:8888` (built from your **Server IP**), what the
   add-on serves directly on your network.
 - **External** — your public **HTTPS** URL, what Amazon's relay actually fetches.
 
@@ -582,6 +586,7 @@ examples below use the **Example configuration** from earlier — `driveway` (di
 [08:14:01] [init] timezone: America/Denver
 [08:14:01] ──── configuration summary (safe to share — passwords/tokens masked) ────
 [08:14:01] version=1.19.5  tz=America/Denver  ffmpeg=6.1.1
+[08:14:01] mode=add-on — Home Assistant API via the Supervisor proxy; UI on :8099 behind ingress (authenticated by HA)
 [diag] disk /tmp/hls: 41% used, 120.3G free of 234.0G (holds HLS segments + log)
 [diag] lan_ip=192.168.1.100   ports: hls=8888 inject=8790 ui=8099
 [diag] rtsp defaults: user='admin' port=554 path='/cam/realmonitor?channel=1&subtype=1' password=SET
@@ -815,7 +820,8 @@ cameras:
 # Optional, top-level:
 inject_token: "a-long-random-secret"   # require this on the control API (recommended)
 tts_engine: "tts.google_en_com"        # default engine for the {"text": ...} convenience
-# ha_base: "http://homeassistant:8123" # where the add-on fetches HA audio from (default is fine)
+# ha_base: "http://homeassistant:8123" # where HA audio is fetched from (default is fine as an add-on;
+                                       # standalone, set HA_URL in the environment instead)
 ```
 
 ### The control API — `POST http://<addon-host>:8790/say`
@@ -992,7 +998,7 @@ expose it to the internet, and protect it with `inject_token`.
 | `[cam] Connection refused` / `timed out` | Wrong host, port, or camera offline | Verify IP/port; test the RTSP URL in VLC. |
 | `[cam] 404 Not Found` | Wrong `path` for this camera/brand | Fix `path` / `default_path`; confirm in VLC or the Validate tab. |
 | Echo shows **black**, snapshot OK | Source is H.265 / H.264 **High** in `copy` mode | Switch that camera to `mode: transcode` (or set its sub stream to H.264B). |
-| Config won't save | **Home Assistant IP** missing or a hostname | Enter the HA server's **private IPv4** (e.g. `192.168.1.100`), not a hostname. |
+| Config won't save | **Server IP** missing or a hostname | Enter the **private IPv4** of the host publishing port 8888 (e.g. `192.168.1.100`), not a hostname. |
 | Alexa black, **no `172.x`** in Logs when asked | Stream not reaching the add-on | Look upstream: Cloudflare / WAF / tunnel / Lambda (see the setup guide). |
 | Camera on Alexa **frozen** after an add-on restart/update | Alexa holds the last frame when the HLS stream restarts | Re-show it (*"Alexa, show &lt;camera&gt;"*). Any add-on restart interrupts a live view. |
 | Alexa video **stutters / freezes / flashes black** intermittently (but the stream is up) | The Echo is on **Wi-Fi** pulling a real-time stream with little buffer — usually weak Echo Wi-Fi or a slow/congested network, not the add-on | See [Jittery or stuttering video](#jittery-or-stuttering-video): improve the Echo's Wi-Fi, **raise** HLS buffer segments, and feed the low-res sub stream. Tell-tale: if a **wired** browser plays the same stream smoothly, it's the Echo's link. |
@@ -1003,7 +1009,9 @@ expose it to the internet, and protect it with `inject_token`.
 | **Audio injection:** nothing heard | Camera isn't being **viewed**, or `audio_source` not set | Audio only plays while the camera is shown on an Echo; set the camera's **Audio** to `inject`/`inject_mix` (`inject_mix` needs the source to *have* audio). |
 | **Audio injection:** `POST /say` → **403** | Missing / wrong token | Send `inject_token` (header `X-Inject-Token`, JSON `token`, or `?token=`). |
 | **Audio injection:** `POST /say` → **400 `no inject camera '<name>'`** | That camera's **Audio** is `none` (or the name is wrong) — nothing is injected, no stream is touched | Set the camera's **Audio** to `inject`/`inject_mix` and **Save & apply** (no add-on restart needed — the injector re-reads its cameras on save). The reply's `cams` list shows which cameras *are* inject-enabled; target one of those (or omit `cam` to use the first). |
-| **Audio injection:** `{text}` → **401 Unauthorized** | The add-on couldn't authenticate to Home Assistant to render the TTS (its call to HA's `tts_get_url` was rejected) | Confirm a valid `tts_engine` is set in the **Audio injection** panel. If it persists, restart the add-on to restore its Home Assistant API access — or use `{url}` mode instead, which plays audio you provide and makes no HA TTS call. |
+| **Audio injection:** `{text}` → **401 Unauthorized** | Home Assistant rejected the `tts_get_url` call | Confirm a valid `tts_engine` is set in the **Audio injection** panel. **As an add-on:** restart it to restore its Home Assistant API access. **[Standalone](https://github.com/Hu1kSmash/ha-alexa-cameras/blob/main/docs/DOCKER.md):** `HA_TOKEN` is wrong, revoked, or from a deleted user — create a fresh long-lived access token. Either way, `{url}` mode works instead: it plays audio you provide and makes no HA call. |
+| **Audio injection:** `{text}` → `no Home Assistant token` / `no Home Assistant URL` | Running [standalone](https://github.com/Hu1kSmash/ha-alexa-cameras/blob/main/docs/DOCKER.md) without Home Assistant credentials | Set `HA_URL` and `HA_TOKEN` on the container (see the [standalone guide](https://github.com/Hu1kSmash/ha-alexa-cameras/blob/main/docs/DOCKER.md)). Only `{text}` needs them — `{url}` and `{"test": true}` don't. |
+| **Audio injection:** `{text}` → `Name does not resolve` / `nodename nor servname provided` | Running [standalone](https://github.com/Hu1kSmash/ha-alexa-cameras/blob/main/docs/DOCKER.md) with `HA_URL` unset, so it fell back to the add-on network's `homeassistant:8123`, which doesn't resolve there | Set `HA_URL` to Home Assistant's address as seen from the container — the host's LAN IP, not `localhost`. |
 | **Audio injection:** `/say` → **500 "No such file"** | The audio URL isn't reachable from the add-on's container | Prefer `{text}` (the add-on fetches internally). With `{url}`, point at something the container can reach — not an HA *external* LAN-IP URL. |
 
 ---

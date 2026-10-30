@@ -1,0 +1,57 @@
+# Standalone (non-Home-Assistant-add-on) deployment — e.g. Unraid via the Docker Compose
+# Manager plugin, or any plain Docker host. Built locally from this repo; nothing is pulled
+# from a registry except the base image.
+#
+#   docker compose build && docker compose up -d
+#
+# Host-specific values and the Home Assistant token live in a .env file next to this one.
+# Full walkthrough: docs/DOCKER.md
+services:
+  alexa-cameras:
+    container_name: alexa-cameras
+    build:
+      context: ./alexa_cameras
+      args:
+        # The same base image the Home Assistant builder uses, so the runtime (s6-overlay
+        # as PID 1, ffmpeg, python3) is identical in both modes. x86_64 — which is what
+        # Unraid runs; on an arm64 host build with aarch64-base instead.
+        BUILD_FROM: ghcr.io/home-assistant/amd64-base:3.19
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      # Skip the Supervisor probe and use HA_URL/HA_TOKEN below. Not strictly required —
+      # there is no Supervisor token to find here anyway — but it makes the mode explicit
+      # in the startup log instead of inferred.
+      STANDALONE: "1"
+      # Where Home Assistant is, e.g. http://192.168.1.100:8123. Only needed for the
+      # audio-injection {"text": ...} mode, which asks HA to render the speech;
+      # {"url": ...} and {"test": true} need neither of these.
+      HA_URL: ${HA_URL:-}
+      # A long-lived access token: Home Assistant -> your profile -> Security.
+      # Treat it as a password — it has your user's full access.
+      HA_TOKEN: ${HA_TOKEN:-}
+    ports:
+      - "8888:8888"   # HLS playlist/segments/snapshots — point your tunnel here
+      - "8790:8790"   # audio-injection control API (POST /say) — set inject_token in the UI
+      - "8099:8099"   # Web UI — NO AUTHENTICATION, see the note below
+    volumes:
+      # The only persistent state: config.yaml, written by the Web UI.
+      - ${DATA_DIR:-/mnt/user/appdata/alexa-cameras}:/data
+      # Everything ephemeral lives in /tmp and churns constantly: ~1-second HLS segments
+      # written and deleted per camera, a snapshot.jpg every 5s, the log the UI's Logs tab
+      # tails, an on-demand request file rewritten on every segment request, and the
+      # injector's FIFOs. On Unraid that write load would otherwise land in docker.img, so
+      # keep it in RAM. Raise the size if you run many high-bitrate cameras.
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 536870912   # 512 MB
+    # Do NOT add `pid: host` or `pid: service:...`. run.sh stops camera workers with
+    # in-container pattern kills (`pkill -x ffmpeg`, `pkill -f /tmp/hls/<cam>/seg_`,
+    # `pkill -f /injector.py`), so it must own its PID namespace or it would match and
+    # kill processes outside the container.
+    #
+    # No `init:` either — s6-overlay from the base image is already PID 1 and reaps.
+    #
+    # No `healthcheck:` on purpose: the HLS file server logs every request, so a periodic
+    # probe would add a permanent stream of noise to `docker logs` and the UI's Logs tab.

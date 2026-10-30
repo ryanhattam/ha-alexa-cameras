@@ -69,6 +69,11 @@ self-hosted Alexa Smart Home skill** (see [Prerequisites](#prerequisites)).
 
 ## Prerequisites
 
+> **Running the add-on as a [standalone Docker container](DOCKER.md)?** This guide applies
+> unchanged except for one substitution: wherever it says the Home Assistant host's IP as
+> the source of port **8888**, use your **Docker/Unraid host's** IP instead (they're the
+> same address if both run on that box). Steps 3–6 are identical.
+
 This guide covers **only the camera-specific pieces**. Two things must **already be
 set up and working** before you start — and **issues with either belong to their own
 project, not this add-on:**
@@ -147,7 +152,10 @@ certificate**. A Cloudflare Tunnel gives you that without opening any ports.
 
 A Cloudflare tunnel is configured **one of two mutually-exclusive ways**.
 **Whichever you use, the route for your camera domain must point at THIS add-on on
-port `8888`** — not at go2rtc/Frigate.
+port `8888`** — not at go2rtc/Frigate. That means `http://<host>:8888`, where `<host>` is
+the machine the add-on runs on: your Home Assistant server, or your Docker/Unraid host if
+you run it as a [standalone container](DOCKER.md). It must match the **Server IP**
+(`lan_ip`) you set in the Web UI.
 
 - **Add-on-managed (Option A):** the Cloudflared add-on owns the tunnel config, and
   you route the camera domain with **`additional_hosts`**.

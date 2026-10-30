@@ -13,18 +13,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Ingress Web UI for the Alexa Cameras (HLS) add-on.
+"""Web UI for Alexa Cameras (HLS).
 
-Self-managed config: the add-on's real configuration lives in /data/config.yaml,
-edited from this UI (form or raw YAML) — NOT the Home Assistant add-on options —
-so it needs no Supervisor API access. Saving writes the file and touches /tmp/reload,
-which run.sh watches to restart the camera workers in-place.
+Served on :8099 through Home Assistant ingress as an add-on, or published directly as a
+standalone container — where nothing authenticates it, so it belongs behind a reverse
+proxy (see docs/DOCKER.md). Nothing here needs to know which: every request the page
+makes is relative, so it works under any path, and haapi resolves the two optional
+Home Assistant calls.
+
+Self-managed config: the real configuration lives in /data/config.yaml, edited from this
+UI (form or raw YAML) — NOT the Home Assistant add-on options. Saving writes the file and
+touches /tmp/reload, which run.sh watches to restart the camera workers in-place.
 
 Tabs: Overview, Configuration, Validate streams, Public URL check, Logs,
 + a hidden Advanced diagnostics page (deep stream probes; reached via the small
 icon on Overview) that uses the /api/validate/{rate|keyframe|firstframe} endpoints.
 
-JSON API (same origin, served through Home Assistant ingress):
+JSON API (same origin, relative paths — works through ingress or served directly):
   GET  /api/config      -> {data, yaml, error}        the current config
   GET  /api/cameras     -> [{name, mode, source}]     (source has the password masked)
   GET  /api/logs        -> {text}                      tail of the add-on log
@@ -47,6 +52,7 @@ import time
 import urllib.request
 import urllib.error
 import yaml
+import haapi
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -62,23 +68,24 @@ try:
     VERSION = str((yaml.safe_load(open("/manifest.yaml")) or {}).get("version", "")) or "unknown"
 except Exception:
     VERSION = "unknown"
-
-# s6-overlay strips SUPERVISOR_TOKEN from the service env but persists it as a file.
-S6_TOKEN_FILE = "/run/s6/container_environment/SUPERVISOR_TOKEN"
+# Add-on vs standalone container. Shown on Overview (and in the diagnostics line) because
+# it decides where configuration comes from and, more importantly, whether anything is
+# authenticating this UI: as an add-on Home Assistant's ingress does, standalone nothing does.
+MODE = haapi.mode()
+MODE_LABEL = ("add-on <span style=\"opacity:.55\">(authenticated by Home Assistant ingress)</span>"
+              if haapi.is_addon() else
+              "standalone container <span style=\"color:#dc2626\">&mdash; this UI has no "
+              "authentication; keep it behind a reverse proxy</span>")
 
 
 def tts_engines():
     """List HA TTS engine entities (tts.*) so the config form can offer them as a dropdown
-    instead of a free-text guess. Uses the s6-persisted Supervisor token to reach HA's
-    states API (needs homeassistant_api in the manifest)."""
+    instead of a free-text guess. haapi resolves how to reach Home Assistant — the
+    Supervisor proxy as an add-on (needs homeassistant_api in the manifest), or
+    HA_URL + HA_TOKEN as a standalone container. An empty list with an error is a
+    perfectly fine outcome: the field falls back to free text."""
     try:
-        tok = open(S6_TOKEN_FILE).read().strip()
-    except Exception:
-        tok = os.environ.get("SUPERVISOR_TOKEN", "")
-    try:
-        req = urllib.request.Request("http://supervisor/core/api/states",
-                                     headers={"Authorization": "Bearer " + tok})
-        states = json.load(urllib.request.urlopen(req, timeout=8))
+        states = haapi.ha_get("/api/states")
     except Exception as e:
         return {"engines": [], "error": str(e)[:200]}
     out = [{"id": s.get("entity_id", ""),
@@ -132,15 +139,18 @@ def validate_config(data):
         return "config must be a mapping (key: value)"
     ip = str(data.get("lan_ip", "")).strip()
     if not ip:
-        return ("Home Assistant IP is required — enter the Home Assistant server's "
-                "internal (private) IPv4 address (e.g. 192.168.1.100), not a hostname.")
+        return ("Server IP is required — enter the internal (private) IPv4 address of "
+                "the host that publishes port 8888, i.e. the machine running this "
+                "add-on/container (e.g. 192.168.1.100), not a hostname. It is what your "
+                "Cloudflare tunnel must point at.")
     try:
         addr = ipaddress.IPv4Address(ip)
     except (ipaddress.AddressValueError, ValueError):
-        return (f"'{ip}' is not a valid IPv4 address. Enter the HA server's internal "
-                "(private) IPv4 address (e.g. 192.168.1.100), not a hostname.")
+        return (f"'{ip}' is not a valid IPv4 address. Enter the internal (private) IPv4 "
+                "address of the host that publishes port 8888 (e.g. 192.168.1.100), "
+                "not a hostname.")
     if not addr.is_private:
-        return (f"'{ip}' is not a private/internal IPv4 address. Use the HA server's "
+        return (f"'{ip}' is not a private/internal IPv4 address. Use that host's "
                 "LAN IP (e.g. 192.168.x.x, 10.x.x.x, or 172.16-31.x.x).")
     hls = data.get("hls_list_size")
     if hls is not None:
@@ -351,7 +361,7 @@ def source_kind(cam, cfg):
       - restream : a URL pointing at a *local* restreamer (go2rtc/Frigate/mediamtx) — one camera
                    stream is fanned out, so the add-on adds no extra load on the camera itself
       - url      : a full RTSP URL that isn't recognizably a local restream (pulled as-is)
-    Restream detection keys on things a real camera never is: the HA host's own IP (lan_ip),
+    Restream detection keys on things a real camera never is: this server's own IP (lan_ip),
     localhost, a Frigate/go2rtc hostname, or port 8554 (the go2rtc/mediamtx restream port)."""
     url = str(cam.get("url", "")).strip()
     host = str(cam.get("host", "")).strip()
@@ -364,7 +374,7 @@ def source_kind(cam, cfg):
             port = None
         lan = str(cfg.get("lan_ip", "")).strip().lower()
         if lan and h == lan:
-            return {"label": "restream", "why": "URL points at your HA host (lan_ip) — a local restream"}
+            return {"label": "restream", "why": "URL points at this server (lan_ip) — a local restream"}
         if h in ("127.0.0.1", "localhost", "::1"):
             return {"label": "restream", "why": "URL points at localhost — a local restream"}
         if any(k in h for k in ("frigate", "go2rtc", "mediamtx", "restream")):
@@ -760,6 +770,7 @@ def sysinfo():
         out["version"] = yaml.safe_load(open("/manifest.yaml")).get("version", "")
     except Exception:
         out["version"] = ""
+    out["mode"] = MODE
     try:
         out["ffmpeg"] = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True,
                                        timeout=5).stdout.split()[2]
@@ -1160,8 +1171,8 @@ INDEX_HTML = r"""<!doctype html>
           <label>Default RTSP path<input id="f-path" type="text" placeholder="/cam/realmonitor?channel=1&amp;subtype=1"></label>
         </div>
       </div>
-      <div class="panel"><h2>Home Assistant IP (required)</h2>
-        <p class="sub" style="margin:0 0 4px">The Home Assistant server's internal (private) IPv4 address on your LAN &mdash; four numbers, <b>not a hostname</b>.</p>
+      <div class="panel"><h2>Server IP (required)</h2>
+        <p class="sub" style="margin:0 0 4px">The internal (private) IPv4 address of the host that publishes port <b>8888</b> &mdash; the Home Assistant server when this runs as an add-on, or the Docker/Unraid host when it runs standalone. Four numbers, <b>not a hostname</b>. This is what your Cloudflare tunnel must target.</p>
         <div class="iprow">
           <input id="f-ip1" class="octet" inputmode="numeric" maxlength="3" placeholder="192" oninput="octetInput(this,'f-ip2')">
           <span class="ipdot">.</span>
@@ -1355,7 +1366,7 @@ async function loadCameras(){
   var tts = cfg.tts_engine ? esc(String(cfg.tts_engine)) : '<span style="opacity:.55">not set</span>';
   var hls = (cfg.hls_list_size===undefined||cfg.hls_list_size===null||cfg.hls_list_size==='') ? 4 : cfg.hls_list_size;
   st.innerHTML =
-    '<div class="k">Version</div><div>__VERSION__</div>'+
+    '<div class="k">Version</div><div>__VERSION__ <span style="opacity:.55">&mdash; running as</span> __MODE__</div>'+
     '<div class="k">Cameras</div><div>'+(CAMS?CAMS.length:'…')+'</div>'+
     '<div class="k">Served at</div><div><a href="'+srv+'" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none">'+srv+'</a> <span style="opacity:.55">&mdash; browse what is being served (new tab)</span></div>'+
     '<div class="k">TTS engine</div><div>'+tts+' <span style="opacity:.55">&mdash; for audio-injection text</span></div>'+
@@ -1604,8 +1615,8 @@ async function toggleYaml(){
 async function saveConfig(){
   if(!yamlMode){
     var ip=lanFromFields();
-    if(!ip){ msg('cfgmsg','<span class="badge error">ERROR</span> Home Assistant IP is required (fill all four fields).'); return; }
-    if(!isIPv4(ip)){ msg('cfgmsg','<span class="badge error">ERROR</span> Home Assistant IP must be four numbers 0-255 (e.g. 192.168.1.100).'); return; }
+    if(!ip){ msg('cfgmsg','<span class="badge error">ERROR</span> Server IP is required (fill all four fields).'); return; }
+    if(!isIPv4(ip)){ msg('cfgmsg','<span class="badge error">ERROR</span> Server IP must be four numbers 0-255 (e.g. 192.168.1.100).'); return; }
   }
   var body = yamlMode ? {yaml:document.getElementById('yamlbox').value} : {data:gatherForm()};
   msg('cfgmsg','<span class="pending">saving&hellip;</span>');
@@ -1751,6 +1762,7 @@ function renderSysinfo(){
     function warn(cond,txt){ return cond?'<b style="color:#dc2626">'+txt+'</b>':txt; }
     var parts=[];
     parts.push('version '+esc(s.version||'?'));
+    parts.push('mode '+esc(s.mode||'?'));
     parts.push('ffmpeg '+esc(s.ffmpeg||'?'));
     if(s.disk) parts.push('disk '+warn(s.disk.pct>=90, s.disk.pct+'% used')+' ('+esc(s.disk.avail)+' free of '+esc(s.disk.size)+')');
     if(s.mem) parts.push('mem '+warn(s.mem.used_pct>=90, s.mem.used_pct+'% used')+' ('+esc(s.mem.avail)+' free of '+esc(s.mem.total)+')');
@@ -1837,12 +1849,13 @@ async function checkPublic(){
 loadCameras();
 </script>
 </body></html>
-""".replace("__REPO__", REPO).replace("__VERSION__", VERSION)
+""".replace("__REPO__", REPO).replace("__VERSION__", VERSION).replace("__MODE__", MODE_LABEL)
 
 
 def main():
     srv = ThreadingHTTPServer(("0.0.0.0", INGRESS_PORT), Handler)
-    print(f"Web UI listening on :{INGRESS_PORT} (ingress)")
+    print(f"Web UI listening on :{INGRESS_PORT} "
+          f"({'ingress' if haapi.is_addon() else 'standalone — no authentication'})")
     srv.serve_forever()
 
 
